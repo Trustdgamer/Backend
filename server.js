@@ -56,11 +56,24 @@ COLLECTIONS.forEach((col) => {
 
   // DELETE /api/collection/:id
   app.delete(`/api/${col}/:id`, async (req, res) => {
-    const result = await db.collection(col).deleteOne({
-      _id: new ObjectId(req.params.id),
-    });
-    res.json(result);
+  const id = req.params.id;
+
+  let result;
+  if (ObjectId.isValid(id)) {
+    result = await db.collection(col).deleteOne({ _id: new ObjectId(id) });
+  } else {
+    result = await db.collection(col).deleteOne({ id });
+  }
+
+  res.json({
+    deletedCount: result.deletedCount,
+    id
   });
+});
+  app.delete('/api/notifications', async (req, res) => {
+  const result = await db.collection('notifications').deleteMany({});
+  res.json({ deletedCount: result.deletedCount });
+});
 
   // PATCH /api/collection/:id
   app.patch(`/api/${col}/:id`, async (req, res) => {
