@@ -26,7 +26,7 @@ const CONFIG = {
   PTERO_API_KEY: 'ptla_WlmLJ9kxZEVL440FrGXhytT9UP8dXxM9miSqnNoFes2',
 
   PTERO_LOCATION_ID: 1,
-  PTERO_EGG_ID: 5
+  PTERO_EGG_ID: 15
 };
 
 // -------------------- MONGO CONNECTION --------------------
