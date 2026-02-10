@@ -2,9 +2,13 @@
 // RESTful MongoDB API for Trustbit + Game & Store endpoints
 // Updated with newer features while keeping old routes intact
 
+// server.js
+// RESTful MongoDB API for Trustbit + Game & Store endpoints + Panel & Telegram integration
+
 import express from 'express';
 import cors from 'cors';
 import { MongoClient, ObjectId } from 'mongodb';
+import fetch from 'node-fetch'; // Required for Node.js fetch
 
 const app = express();
 app.use(cors());
@@ -16,6 +20,16 @@ const MONGO_URI =
 
 const DB_NAME = 'trustbit';
 const PORT = process.env.PORT || 5000;
+
+const CONFIG = {
+  TELEGRAM_BOT_TOKEN: '8381248395:AAGZZg1RGNFSmM0y1vvfh-1N-HFqvqQmdw8',
+  TELEGRAM_ADMIN_CHAT_ID: '6499793556',
+  PTERO_PANEL_URL: 'https://cybertrust.goldens.dev',
+  PTERO_API_KEY: 'ptla_4cgmDAtHvstJqn0OtJ0PAQ9RHTzrXuY9oQpTsWhRenZ',
+  PTERO_LOCATION_ID: 1,
+  PTERO_NEST_ID: 1,
+  PTERO_EGG_ID: 1
+};
 
 // -------------------- MONGO CONNECTION --------------------
 const client = new MongoClient(MONGO_URI);
@@ -81,6 +95,12 @@ COLLECTIONS.forEach((col) => {
   });
 });
 
+// DELETE all notifications
+app.delete('/api/notifications', async (req, res) => {
+  const result = await db.collection('notifications').deleteMany({});
+  res.json({ deletedCount: result.deletedCount });
+});
+
 // -------------------- CUSTOM ROUTES --------------------
 
 // GET /api/leaderboard
@@ -123,90 +143,107 @@ app.post('/api/store/purchase', async (req, res) => {
   res.json({ success: true });
 });
 
-// -------------------- NEW FEATURES --------------------
+// -------------------- TELEGRAM ALERT --------------------
+const sendTelegramAlert = async (userName, planName, specs) => {
+  const message = `
+🚀 *NEW TRUSTBIT ORDER*
+--------------------------
+👤 User: @${userName}
+📦 Plan: ${planName}
+💻 Specs: ${specs.ram} RAM / ${specs.cpu} CPU
+--------------------------
+⚠️ *Action Required:* Check Admin Panel to verify receipt and deploy.
+  `;
 
-// --- Orders ---
-app.get('/api/orders/user/:userId', async (req, res) => {
-  const orders = await db.collection('orders').find({ userEmail: req.params.userId }).toArray();
-  res.json(orders);
+  try {
+    const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CONFIG.TELEGRAM_ADMIN_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown'
+      })
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('Telegram sync failed:', error);
+    return false;
+  }
+};
+
+// POST /api/notify/order
+app.post('/api/notify/order', async (req, res) => {
+  const { userName, planName, specs } = req.body;
+  try {
+    const ok = await sendTelegramAlert(userName, planName, specs);
+    res.json({ success: ok });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/orders/verify', async (req, res) => {
-  const { orderId, status } = req.body;
-  const result = await db.collection('orders').updateOne(
-    { _id: new ObjectId(orderId) },
-    { $set: { status } }
-  );
-  res.json(result);
-});
+// -------------------- PTERODACTYL PROVISION --------------------
+app.post('/api/pterodactyl/provision', async (req, res) => {
+  const { userData, planSpecs } = req.body;
 
-// --- Projects ---
-app.get('/api/projects/user/:userId', async (req, res) => {
-  const projects = await db.collection('projects').find({ ownerId: req.params.userId }).toArray();
-  res.json(projects);
-});
+  const payload = {
+    name: `Trustbit-${userData.username || 'client'}-${Math.floor(Math.random() * 1000)}`,
+    user: 1, // admin user id in panel
+    egg: CONFIG.PTERO_EGG_ID,
+    docker_image: 'ghcr.io/pterodactyl/yolks:debian',
+    startup: 'npm start',
+    environment: {
+      "USER_UPLOAD": "0",
+      "AUTO_UPDATE": "1"
+    },
+    limits: {
+      memory: parseInt(planSpecs.ram) * 1024,
+      swap: 0,
+      disk: parseInt(planSpecs.disk) * 1024,
+      io: 500,
+      cpu: parseInt(planSpecs.cpu) * 100
+    },
+    feature_limits: {
+      databases: 1,
+      allocations: 1,
+      backups: 1
+    },
+    deploy: {
+      locations: [CONFIG.PTERO_LOCATION_ID],
+      dedicated_ip: false,
+      port_range: []
+    }
+  };
 
-app.patch('/api/projects/:id/status', async (req, res) => {
-  const { status } = req.body;
-  const result = await db.collection('projects').updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
-  res.json(result);
-});
+  try {
+    const response = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/servers`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.PTERO_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
 
-// --- Messages / Chat Hub filters ---
-app.get('/api/messages/sender/:sender', async (req, res) => {
-  const messages = await db.collection('messages').find({ sender: req.params.sender }).toArray();
-  res.json(messages);
-});
+    if (!response.ok) {
+      const errData = await response.json();
+      return res.status(response.status).json({ error: errData });
+    }
 
-// --- Courses / Academy ---
-app.post('/api/courses/enroll', async (req, res) => {
-  const { userId, courseId } = req.body;
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const enrolledCourses = user.courses || [];
-  if (!enrolledCourses.includes(courseId)) enrolledCourses.push(courseId);
-
-  await db.collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $set: { courses: enrolledCourses } }
-  );
-
-  res.json({ success: true });
-});
-
-app.patch('/api/courses/complete', async (req, res) => {
-  const { userId, courseId } = req.body;
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const completed = user.completedCourses || [];
-  if (!completed.includes(courseId)) completed.push(courseId);
-
-  await db.collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $set: { completedCourses: completed } }
-  );
-
-  res.json({ success: true });
-});
-
-// --- Admin / CEO actions ---
-app.delete('/api/messages/purge', async (req, res) => {
-  const result = await db.collection('messages').deleteMany({});
-  res.json({ deletedCount: result.deletedCount });
-});
-
-app.delete('/api/notifications/purge', async (req, res) => {
-  const result = await db.collection('notifications').deleteMany({});
-  res.json({ deletedCount: result.deletedCount });
+    const data = await response.json();
+    return res.json(data);
+  } catch (err) {
+    console.error('Panel provisioning failed:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // -------------------- SERVER --------------------
 app.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
 });
+
 
