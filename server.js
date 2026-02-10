@@ -1,6 +1,6 @@
 // server.js
 // RESTful MongoDB API for Trustbit + Game & Store endpoints
-// Plain JavaScript version (Render-friendly)
+// Updated with newer features while keeping old routes intact
 
 import express from 'express';
 import cors from 'cors';
@@ -56,24 +56,20 @@ COLLECTIONS.forEach((col) => {
 
   // DELETE /api/collection/:id
   app.delete(`/api/${col}/:id`, async (req, res) => {
-  const id = req.params.id;
+    const id = req.params.id;
 
-  let result;
-  if (ObjectId.isValid(id)) {
-    result = await db.collection(col).deleteOne({ _id: new ObjectId(id) });
-  } else {
-    result = await db.collection(col).deleteOne({ id });
-  }
+    let result;
+    if (ObjectId.isValid(id)) {
+      result = await db.collection(col).deleteOne({ _id: new ObjectId(id) });
+    } else {
+      result = await db.collection(col).deleteOne({ id });
+    }
 
-  res.json({
-    deletedCount: result.deletedCount,
-    id
+    res.json({
+      deletedCount: result.deletedCount,
+      id
+    });
   });
-});
-  app.delete('/api/notifications', async (req, res) => {
-  const result = await db.collection('notifications').deleteMany({});
-  res.json({ deletedCount: result.deletedCount });
-});
 
   // PATCH /api/collection/:id
   app.patch(`/api/${col}/:id`, async (req, res) => {
@@ -127,7 +123,90 @@ app.post('/api/store/purchase', async (req, res) => {
   res.json({ success: true });
 });
 
+// -------------------- NEW FEATURES --------------------
+
+// --- Orders ---
+app.get('/api/orders/user/:userId', async (req, res) => {
+  const orders = await db.collection('orders').find({ userEmail: req.params.userId }).toArray();
+  res.json(orders);
+});
+
+app.post('/api/orders/verify', async (req, res) => {
+  const { orderId, status } = req.body;
+  const result = await db.collection('orders').updateOne(
+    { _id: new ObjectId(orderId) },
+    { $set: { status } }
+  );
+  res.json(result);
+});
+
+// --- Projects ---
+app.get('/api/projects/user/:userId', async (req, res) => {
+  const projects = await db.collection('projects').find({ ownerId: req.params.userId }).toArray();
+  res.json(projects);
+});
+
+app.patch('/api/projects/:id/status', async (req, res) => {
+  const { status } = req.body;
+  const result = await db.collection('projects').updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+  res.json(result);
+});
+
+// --- Messages / Chat Hub filters ---
+app.get('/api/messages/sender/:sender', async (req, res) => {
+  const messages = await db.collection('messages').find({ sender: req.params.sender }).toArray();
+  res.json(messages);
+});
+
+// --- Courses / Academy ---
+app.post('/api/courses/enroll', async (req, res) => {
+  const { userId, courseId } = req.body;
+  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const enrolledCourses = user.courses || [];
+  if (!enrolledCourses.includes(courseId)) enrolledCourses.push(courseId);
+
+  await db.collection('users').updateOne(
+    { _id: new ObjectId(userId) },
+    { $set: { courses: enrolledCourses } }
+  );
+
+  res.json({ success: true });
+});
+
+app.patch('/api/courses/complete', async (req, res) => {
+  const { userId, courseId } = req.body;
+  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const completed = user.completedCourses || [];
+  if (!completed.includes(courseId)) completed.push(courseId);
+
+  await db.collection('users').updateOne(
+    { _id: new ObjectId(userId) },
+    { $set: { completedCourses: completed } }
+  );
+
+  res.json({ success: true });
+});
+
+// --- Admin / CEO actions ---
+app.delete('/api/messages/purge', async (req, res) => {
+  const result = await db.collection('messages').deleteMany({});
+  res.json({ deletedCount: result.deletedCount });
+});
+
+app.delete('/api/notifications/purge', async (req, res) => {
+  const result = await db.collection('notifications').deleteMany({});
+  res.json({ deletedCount: result.deletedCount });
+});
+
 // -------------------- SERVER --------------------
 app.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
 });
+
