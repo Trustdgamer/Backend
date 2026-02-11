@@ -25,7 +25,7 @@ const CONFIG = {
   PTERO_PANEL_URL: 'http://143.244.132.2',
   PTERO_API_KEY: 'ptla_WlmLJ9kxZEVL440FrGXhytT9UP8dXxM9miSqnNoFes2',
 
-  PTERO_LOCATION_ID: 5,
+  PTERO_LOCATION_ID: 1,
   PTERO_EGG_ID: 15
 };
 
@@ -179,30 +179,60 @@ const createPteroUser = async (user) => {
 };
 
 // -------------------- PTERODACTYL SERVER PROVISION --------------------
+// -------------------- PTERODACTYL SERVER PROVISION --------------------
 app.post('/api/pterodactyl/provision', async (req, res) => {
   try {
-    const { username, ramCmd = "1gb", egg = 15, locationId = 1 } = req.body;
+    const { username, plan } = req.body;
 
-    if (!username) return res.status(400).json({ error: "Username is required" });
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
+    }
+
+    if (!plan) {
+      return res.status(400).json({ error: "Plan (1gb-10gb) is required" });
+    }
+
+    // ------------------- PLAN LIMITS -------------------
+    const PLAN_LIMITS = {
+      "1gb": { memory: 1024, disk: 1024, cpu: 40 },
+      "2gb": { memory: 2048, disk: 2048, cpu: 60 },
+      "3gb": { memory: 3072, disk: 3072, cpu: 80 },
+      "4gb": { memory: 4096, disk: 4096, cpu: 100 },
+      "5gb": { memory: 5120, disk: 5120, cpu: 120 },
+      "6gb": { memory: 6144, disk: 6144, cpu: 140 },
+      "7gb": { memory: 7168, disk: 7168, cpu: 160 },
+      "8gb": { memory: 8192, disk: 8192, cpu: 180 },
+      "9gb": { memory: 9216, disk: 9216, cpu: 200 },
+      "10gb": { memory: 10240, disk: 10240, cpu: 220 }
+    };
+
+    const selectedPlan = PLAN_LIMITS[plan.toLowerCase()];
+
+    if (!selectedPlan) {
+      return res.status(400).json({ error: "Invalid plan selected" });
+    }
 
     // ------------------- CREATE PTERODACTYL USER -------------------
     const userPayload = {
       email: `${username}@trustbit.auto`,
       username: username.toLowerCase(),
       first_name: username,
-      last_name: "Server",
-      password: username + Math.random().toString(36).slice(-6)
+      last_name: "Trustbit",
+      password: Math.random().toString(36).slice(-12)
     };
 
-    const userRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/users`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify(userPayload)
-    });
+    const userRes = await fetch(
+      `${CONFIG.PTERO_PANEL_URL}/api/application/users`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(userPayload)
+      }
+    );
 
     if (!userRes.ok) {
       const errText = await userRes.text();
@@ -212,61 +242,45 @@ app.post('/api/pterodactyl/provision', async (req, res) => {
     const userData = await userRes.json();
     const userId = userData.attributes.id;
 
-    // ------------------- SELECT SERVER LIMITS -------------------
-    let ram, disk, cpu;
-    switch (ramCmd.toLowerCase()) {
-      case "1gb": ram="1125"; disk="1125"; cpu="40"; break;
-      case "2gb": ram="2125"; disk="2125"; cpu="60"; break;
-      case "3gb": ram="3125"; disk="3125"; cpu="80"; break;
-      case "4gb": ram="4125"; disk="4125"; cpu="100"; break;
-      case "5gb": ram="5125"; disk="5125"; cpu="120"; break;
-      case "6gb": ram="6125"; disk="6125"; cpu="140"; break;
-      case "7gb": ram="7125"; disk="7125"; cpu="160"; break;
-      case "8gb": ram="8125"; disk="8125"; cpu="180"; break;
-      case "9gb": ram="9125"; disk="9125"; cpu="200"; break;
-      case "10gb": ram="10125"; disk="10125"; cpu="220"; break;
-      default: ram="1125"; disk="1125"; cpu="40"; break;
-    }
-
-    // ------------------- FETCH EGG INFO -------------------
-    const eggRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/nests/5/eggs/${egg}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
-        Accept: "application/json"
-      }
-    });
-
-    if (!eggRes.ok) {
-      const errText = await eggRes.text();
-      return res.status(eggRes.status).json({ error: errText });
-    }
-
-    const eggData = await eggRes.json();
-    const startupCmd = eggData.attributes.startup || "npm start";
-
     // ------------------- CREATE SERVER -------------------
     const serverPayload = {
-      name: `${username}-server`,
+      name: `${username}-${plan}`,
       user: userId,
-      egg: parseInt(egg),
+      egg: CONFIG.PTERO_EGG_ID,
       docker_image: "ghcr.io/parkervcp/yolks:nodejs_18",
-      startup: startupCmd,
-      environment: { CMD_RUN: "npm start", USER_UPLOAD: "0", AUTO_UPDATE: "0" },
-      limits: { memory: ram, swap: 0, disk: disk, io: 500, cpu: cpu },
-      feature_limits: { databases: 5, backups: 5, allocations: 5 },
-      deploy: { locations: [parseInt(locationId)], dedicated_ip: false, port_range: [] }
+      startup: "npm start",
+      environment: {}, // 🔥 no unnecessary egg variables
+      limits: {
+        memory: selectedPlan.memory,
+        swap: 0,
+        disk: selectedPlan.disk,
+        io: 500,
+        cpu: selectedPlan.cpu
+      },
+      feature_limits: {
+        databases: 3,
+        backups: 3,
+        allocations: 2
+      },
+      deploy: {
+        locations: [CONFIG.PTERO_LOCATION_ID],
+        dedicated_ip: false,
+        port_range: []
+      }
     };
 
-    const serverRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/servers`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify(serverPayload)
-    });
+    const serverRes = await fetch(
+      `${CONFIG.PTERO_PANEL_URL}/api/application/servers`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(serverPayload)
+      }
+    );
 
     if (!serverRes.ok) {
       const errText = await serverRes.text();
@@ -275,13 +289,18 @@ app.post('/api/pterodactyl/provision', async (req, res) => {
 
     const serverData = await serverRes.json();
 
-    return res.json({ user: userData.attributes, server: serverData.attributes });
+    return res.json({
+      success: true,
+      user: userData.attributes,
+      server: serverData.attributes
+    });
 
   } catch (err) {
-    console.error(err);
+    console.error("[Provision Error]", err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // -------------------- SERVER START --------------------
