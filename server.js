@@ -181,62 +181,108 @@ const createPteroUser = async (user) => {
 // -------------------- PTERODACTYL SERVER PROVISION --------------------
 app.post('/api/pterodactyl/provision', async (req, res) => {
   try {
-    const { userData, planSpecs } = req.body;
+    const { username, ramCmd = "1gb", egg = 15, locationId = 1 } = req.body;
 
-    const pteroUser = await createPteroUser(userData);
+    if (!username) return res.status(400).json({ error: "Username is required" });
 
-    const payload = {
-      name: `Trustbit-${userData.username}-${Date.now()}`,
-      user: pteroUser.id,
-      egg: CONFIG.PTERO_EGG_ID,
-      docker_image: 'ghcr.io/pterodactyl/yolks:nodejs_18',
-      startup: 'npm start',
-      environment: {},
-      limits: {
-        memory: Number(planSpecs.ram) * 1024,
-        swap: 0,
-        disk: Number(planSpecs.disk) * 1024,
-        io: 500,
-        cpu: Number(planSpecs.cpu) * 100
-      },
-      feature_limits: {
-        databases: 1,
-        allocations: 1,
-        backups: 1
-      },
-      deploy: {
-        locations: [CONFIG.PTERO_LOCATION_ID],
-        dedicated_ip: false,
-        port_range: []
-      }
+    // ------------------- CREATE PTERODACTYL USER -------------------
+    const userPayload = {
+      email: `${username}@trustbit.auto`,
+      username: username.toLowerCase(),
+      first_name: username,
+      last_name: "Server",
+      password: username + Math.random().toString(36).slice(-6)
     };
 
-    const response = await fetch(
-      `${CONFIG.PTERO_PANEL_URL}/api/application/servers`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    const text = await response.text();
-    if (!response.ok) return res.status(500).json({ error: text });
-
-    res.json({
-      success: true,
-      user: pteroUser,
-      server: JSON.parse(text)
+    const userRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/users`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(userPayload)
     });
+
+    if (!userRes.ok) {
+      const errText = await userRes.text();
+      return res.status(userRes.status).json({ error: errText });
+    }
+
+    const userData = await userRes.json();
+    const userId = userData.attributes.id;
+
+    // ------------------- SELECT SERVER LIMITS -------------------
+    let ram, disk, cpu;
+    switch (ramCmd.toLowerCase()) {
+      case "1gb": ram="1125"; disk="1125"; cpu="40"; break;
+      case "2gb": ram="2125"; disk="2125"; cpu="60"; break;
+      case "3gb": ram="3125"; disk="3125"; cpu="80"; break;
+      case "4gb": ram="4125"; disk="4125"; cpu="100"; break;
+      case "5gb": ram="5125"; disk="5125"; cpu="120"; break;
+      case "6gb": ram="6125"; disk="6125"; cpu="140"; break;
+      case "7gb": ram="7125"; disk="7125"; cpu="160"; break;
+      case "8gb": ram="8125"; disk="8125"; cpu="180"; break;
+      case "9gb": ram="9125"; disk="9125"; cpu="200"; break;
+      case "10gb": ram="10125"; disk="10125"; cpu="220"; break;
+      default: ram="1125"; disk="1125"; cpu="40"; break;
+    }
+
+    // ------------------- FETCH EGG INFO -------------------
+    const eggRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/nests/5/eggs/${egg}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
+        Accept: "application/json"
+      }
+    });
+
+    if (!eggRes.ok) {
+      const errText = await eggRes.text();
+      return res.status(eggRes.status).json({ error: errText });
+    }
+
+    const eggData = await eggRes.json();
+    const startupCmd = eggData.attributes.startup || "npm start";
+
+    // ------------------- CREATE SERVER -------------------
+    const serverPayload = {
+      name: `${username}-server`,
+      user: userId,
+      egg: parseInt(egg),
+      docker_image: "ghcr.io/parkervcp/yolks:nodejs_18",
+      startup: startupCmd,
+      environment: { CMD_RUN: "npm start", USER_UPLOAD: "0", AUTO_UPDATE: "0" },
+      limits: { memory: ram, swap: 0, disk: disk, io: 500, cpu: cpu },
+      feature_limits: { databases: 5, backups: 5, allocations: 5 },
+      deploy: { locations: [parseInt(locationId)], dedicated_ip: false, port_range: [] }
+    };
+
+    const serverRes = await fetch(`${CONFIG.PTERO_PANEL_URL}/api/application/servers`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${CONFIG.PTERO_API_KEY}`,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(serverPayload)
+    });
+
+    if (!serverRes.ok) {
+      const errText = await serverRes.text();
+      return res.status(serverRes.status).json({ error: errText });
+    }
+
+    const serverData = await serverRes.json();
+
+    return res.json({ user: userData.attributes, server: serverData.attributes });
+
   } catch (err) {
-    console.error('[Provision Error]', err);
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // -------------------- SERVER START --------------------
 app.listen(PORT, () => {
