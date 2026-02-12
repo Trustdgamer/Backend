@@ -5,7 +5,6 @@
 import express from 'express';
 import cors from 'cors';
 import { MongoClient, ObjectId } from 'mongodb';
-import fetch from 'node-fetch';
 
 const app = express();
 app.use(cors());
