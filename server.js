@@ -248,7 +248,12 @@ app.post('/api/pterodactyl/provision', async (req, res) => {
       egg: CONFIG.PTERO_EGG_ID,
       docker_image: "ghcr.io/parkervcp/yolks:nodejs_18",
       startup: "npm start",
-      environment: {}, // 🔥 no unnecessary egg variables
+      environment: {
+  CMD_RUN: "npm start",
+  USER_UPLOAD: "0",
+  AUTO_UPDATE: "0"
+},
+ // 🔥 no unnecessary egg variables
       limits: {
         memory: selectedPlan.memory,
         swap: 0,
